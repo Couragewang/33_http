@@ -4,8 +4,14 @@
 
 int main()
 {
-    std::string s("abcdefg");
-    std::cout << s.substr(4) << std::endl;
+    std::stringstream ss;
+    int n=1234;
+
+    ss << n;
+
+    std::string str = ss.str();
+    std::cout << str << std::endl;
+
 
 //    char msg[] = "aaa bbb ccc";
 //    std::stringstream ss(msg);
