@@ -3,6 +3,7 @@
 
 #include <iostream>
 #include <string>
+#include <string.h>
 #include <strings.h>
 #include <sstream>
 #include <unordered_map>
@@ -25,7 +26,7 @@
 
 #define HTTP_VERSION "http/1.0"
 
-std::unordered_map<std::string, std:string> stuffix_map{
+std::unordered_map<std::string, std::string> stuffix_map{
     {".html","text/html"},
     {".htm", "text/html"},
     {".css", "text/css"},
@@ -47,9 +48,9 @@ class ProtocolUtil{
 
             kv_.insert(make_pair(k_, v_));
         }
-        static std::string IntToString(int &code)
+        static std::string IntToString(int code)
         {
-            stringstream ss;
+            std::stringstream ss;
             ss << code;
             return ss.str();
         }
@@ -91,7 +92,7 @@ class Request{
         int content_length;
 
     public:
-        Request():blank("\n"), cgi(false), path(WEB_ROOT), resource_size(0),content_length(-1), resource_suffix(".html");
+        Request():blank("\n"), cgi(false), path(WEB_ROOT), resource_size(0),content_length(-1), resource_suffix(".html")
         {}
         std::string &GetParam()
         {
@@ -111,17 +112,17 @@ class Request{
         }
         void RequestLineParse()
         {
-            stringstream ss(rq_line);
+            std::stringstream ss(rq_line);
             ss >> method >> uri >> version;
         }
         void UriParse()
         {
-            if(strncmp(method.c_str(), "GET") == 0){
+            if(strcasecmp(method.c_str(), "GET") == 0){
                 std::size_t pos_ = uri.find('?');
                 if(std::string::npos != pos_){
                     cgi = true;
-                    path += uri.substr(0, pos);
-                    param = uri.substr(pos+1);
+                    path += uri.substr(0, pos_);
+                    param = uri.substr(pos_+1);
                 }
                 else{
                     path += uri;
@@ -146,13 +147,16 @@ class Request{
 
                 std::string sub_string_ = rq_head.substr(start, pos - start);
                 if(!sub_string_.empty()){
+                    LOG(INFO, "substr is not empty!");
                     ProtocolUtil::MakeKV(head_kv, sub_string_);
                 }
                 else{
+                    LOG(INFO, "substr is empty!");
                     break;
                 }
                 start = pos + 1;
             }
+            return true;
         }
         int GetContentLength()
         {
@@ -165,8 +169,8 @@ class Request{
         }
         bool IsMethodLegal()
         {
-            if(strcasecmp(method.c_str(),"GET") == 0 ||\
-                    cgi = (strcasecmp(method.c_str(),"POST") == 0)){
+            if( strcasecmp(method.c_str(),"GET") == 0 ||\
+                    (cgi = (strcasecmp(method.c_str(),"POST") == 0)) ){
                 return true;
             }
 
@@ -201,7 +205,7 @@ class Request{
         }
         bool IsNeedRecvText()
         {
-            if(strcasecmp(method.c_str(), "POST")){
+            if(strcasecmp(method.c_str(), "POST") == 0){
                 return true;
             }
             return false;
@@ -304,12 +308,12 @@ class Connect{
             int i_ = 0;
             while( i_ < len_){
                 recv(sock, &c_, 1, 0);
-                text_.push_back(c);
+                text_.push_back(c_);
             }
 
             param_ = text_;
         }
-        void SendResponse(Response *&rsp_, Request *&rq_,bool &cgi_)
+        void SendResponse(Response *&rsp_, Request *&rq_,bool cgi_)
         {
             if(cgi_){
 
@@ -321,7 +325,7 @@ class Connect{
 
                 send(sock, rsp_line_.c_str(), rsp_line_.size(), 0);
                 send(sock, rsp_head_.c_str(), rsp_head_.size(), 0);
-                send(scok, blank_.c_str(), blank_.size(), 0);
+                send(sock, blank_.c_str(), blank_.size(), 0);
                 sendfile(sock, fd, NULL, rq_->GetResourceSize());
             }
         }
@@ -335,7 +339,7 @@ class Connect{
 
 class Entry{
     public:
-        static int ProcessNonCgi(Connect *&conn_, Request *&rq_, Response *&rsp_)
+        static void ProcessNonCgi(Connect *&conn_, Request *&rq_, Response *&rsp_)
         {
             int &code_ = rsp_->code;
             rsp_->MakeStatusLine();
@@ -343,10 +347,34 @@ class Entry{
             rsp_->OpenResource(rq_);
             conn_->SendResponse(rsp_, rq_, false);
         }
+        static void ProcessCgi(Connect *&conn_, Request *&rq_, Response *&rsp_)
+        {
+            int &code_ = rq_->code;
+            int input[2];
+            int output[2];
+
+            pipe(input);
+            pipe(output);
+
+            pid_t id = fork();
+            if( id < 0 ){
+                code_ = NOT_FOUND;
+                return;
+            }
+            else if(id == 0){//child
+                close(input[1]);
+                close(output[0]);
+            }
+            else{//parent
+                close(input[0]);
+                close(output[1]);
+
+            }
+        }
         static int  PorcessResponse(Connect *&conn_, Request *&rq_, Response *&rsp_)
         {
             if(rq_->IsCgi()){
-                //ProcessCgi();
+                ProcessCgi(conn_, rq_, rsp_);
             }else{
                 ProcessNonCgi(conn_, rq_, rsp_);
             }
@@ -379,9 +407,9 @@ class Entry{
 
             conn_->RecvRequestHead(rq_->rq_head);
             if(rq_->RequestHeadParse()){
-                LOG(INFO, "parse head done")
+                LOG(INFO, "parse head done");
             }else{
-                code = NOT_FOUND;
+                code_ = NOT_FOUND;
                 goto end;
             }
 
@@ -392,7 +420,7 @@ class Entry{
             //request recv done!
             PorcessResponse(conn_, rq_, rsp_);
 end:
-            if(code != OK){
+            if(code_ != OK){
                 //HandlerError(sock_);
             }
             delete conn_;
