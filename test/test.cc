@@ -4,13 +4,18 @@
 
 int main()
 {
-    std::stringstream ss;
-    int n=1234;
-
-    ss << n;
-
-    std::string str = ss.str();
-    std::cout << str << std::endl;
+    std::string str = "/a/b/c.html";
+    //std::size_t pos = str.rfind(".");
+    std::size_t pos = str.find_last_of(".");
+    if(std::string::npos != pos)
+    {
+        std::cout << str.substr(pos) << std::endl;
+    }
+//    std::stringstream ss;
+//    int n=1234;
+//    ss << n;
+//    std::string str = ss.str();
+//    std::cout << str << std::endl;
 
 
 //    char msg[] = "aaa bbb ccc";

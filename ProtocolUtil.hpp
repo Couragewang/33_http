@@ -10,9 +10,11 @@
 #include <stdlib.h>
 #include <sys/types.h>
 #include <sys/stat.h>
+#include <fcntl.h>
 #include <sys/socket.h>
 #include <arpa/inet.h>
 #include <netinet/in.h>
+#include <sys/sendfile.h>
 #include "Log.hpp"
 
 #define OK 200
@@ -22,6 +24,13 @@
 #define HOME_PAGE "index.html"
 
 #define HTTP_VERSION "http/1.0"
+
+std::unordered_map<std::string, std:string> stuffix_map{
+    {".html","text/html"},
+    {".htm", "text/html"},
+    {".css", "text/css"},
+    {".js", "application/x-javascript"}
+};
 
 class ProtocolUtil{
     public:
@@ -55,6 +64,10 @@ class ProtocolUtil{
                     return "UNKNOW";
             }
         }
+        static std::string SuffixToType(const std::string &suffix_)
+        {
+            return stuffix_map[suffix_];
+        }
 };
 
 class Request{
@@ -73,10 +86,12 @@ class Request{
         std::string param;
 
         int resource_size;
+        std::string resource_suffix;
         std::unordered_map<std::string, std::string> head_kv;
         int content_length;
+
     public:
-        Request():blank("\n"), cgi(false), path(WEB_ROOT), resource_size(0),content_length(-1);
+        Request():blank("\n"), cgi(false), path(WEB_ROOT), resource_size(0),content_length(-1), resource_suffix(".html");
         {}
         std::string &GetParam()
         {
@@ -86,6 +101,14 @@ class Request{
         {
             return resource_size;
         }
+        std::string &GetSuffix()
+        {
+            return resource_suffix;
+        }
+        std::string &GetPath()
+        {
+            return path;
+        }
         void RequestLineParse()
         {
             stringstream ss(rq_line);
@@ -93,15 +116,21 @@ class Request{
         }
         void UriParse()
         {
-            std::size_t pos_ = uri.find('?');
-            if(std::string::npos != pos_){
-                cgi = true;
-                path += uri.substr(0, pos);
-                param = uri.substr(pos+1);
+            if(strncmp(method.c_str(), "GET") == 0){
+                std::size_t pos_ = uri.find('?');
+                if(std::string::npos != pos_){
+                    cgi = true;
+                    path += uri.substr(0, pos);
+                    param = uri.substr(pos+1);
+                }
+                else{
+                    path += uri;
+                }
             }
             else{
                 path += uri;
             }
+
             if(path[path.size() -1] == '/'){
                 path += HOME_PAGE;
             }
@@ -164,6 +193,10 @@ class Request{
             }
 
             resource_size = st.st_size;
+            std::size_t pos = path.rfind(".");
+            if(std::string::npos != pos){
+                resource_suffix = path.substr(pos);
+            }
             return true;
         }
         bool IsNeedRecvText()
@@ -182,15 +215,15 @@ class Request{
 };
 
 class Response{
-    private:
+    public:
         std::string rsp_line;
         std::string rsp_head;
         std::string blank;
         std::string rsp_text;
-    public:
+        int fd;
         int code;
     public:
-        Response():blank("\n"), code(OK)
+        Response():blank("\n"), code(OK), fd(-1)
         {}
         void MakeStatusLine()
         {
@@ -199,6 +232,7 @@ class Response{
             rsp_line += ProtocolUtil::IntToString(code);
             rsp_line += " ";
             rsp_line += ProtocolUtil::CodeToDesc(code);
+            rsp_line += "\n";
         }
         
         void MakeResponseHead(Request *&rq_)
@@ -206,10 +240,22 @@ class Response{
             rsp_head = "Content-Length: ";
             rsp_head += ProtocolUtil::IntToString(rq_->GetResourceSize());
             rsp_head += "\n";
-
+            rsp_head += "Content-Type: ";
+            std::string suffix_ = rq_->GetSuffix();
+            rsp_head += ProtocolUtil::SuffixToType(suffix_);
+            rsp_head += "\n";
+        }
+        void OpenResource(Request *&rq_)
+        {
+            std::string path_ = rq_->GetPath();
+            fd = open(path_.c_str(), O_RDONLY);
         }
         ~Response()
-        {}
+        {
+            if(fd >= 0){
+                close(fd);
+            }
+        }
 };
 
 class Connect{
@@ -263,6 +309,22 @@ class Connect{
 
             param_ = text_;
         }
+        void SendResponse(Response *&rsp_, Request *&rq_,bool &cgi_)
+        {
+            if(cgi_){
+
+            }else{
+                std::string &rsp_line_ = rsp_->rsp_line;
+                std::string &rsp_head_ = rsp_->rsp_head;
+                std::string &blank_ = rsp_->blank;
+                int &fd = rsp_->fd;
+
+                send(sock, rsp_line_.c_str(), rsp_line_.size(), 0);
+                send(sock, rsp_head_.c_str(), rsp_head_.size(), 0);
+                send(scok, blank_.c_str(), blank_.size(), 0);
+                sendfile(sock, fd, NULL, rq_->GetResourceSize());
+            }
+        }
         ~Connect()
         {
             if(sock >= 0){
@@ -278,6 +340,8 @@ class Entry{
             int &code_ = rsp_->code;
             rsp_->MakeStatusLine();
             rsp_->MakeResponseHead(rq_);
+            rsp_->OpenResource(rq_);
+            conn_->SendResponse(rsp_, rq_, false);
         }
         static int  PorcessResponse(Connect *&conn_, Request *&rq_, Response *&rsp_)
         {
@@ -325,7 +389,7 @@ class Entry{
                 conn_->RecvRequestText(rq_->rq_text, rq_->GetContentLength(),\
                         rq_->GetParam());
             }
-
+            //request recv done!
             PorcessResponse(conn_, rq_, rsp_);
 end:
             if(code != OK){
