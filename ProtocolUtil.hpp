@@ -16,6 +16,7 @@
 #include <arpa/inet.h>
 #include <netinet/in.h>
 #include <sys/sendfile.h>
+#include <sys/wait.h>
 #include "Log.hpp"
 
 #define OK 200
@@ -101,6 +102,10 @@ class Request{
         int GetResourceSize()
         {
             return resource_size;
+        }
+        void SetResourceSize(int rs_)
+        {
+            resource_size = rs_;
         }
         std::string &GetSuffix()
         {
@@ -315,17 +320,19 @@ class Connect{
         }
         void SendResponse(Response *&rsp_, Request *&rq_,bool cgi_)
         {
+            std::string &rsp_line_ = rsp_->rsp_line;
+            std::string &rsp_head_ = rsp_->rsp_head;
+            std::string &blank_ = rsp_->blank;
+
+            send(sock, rsp_line_.c_str(), rsp_line_.size(), 0);
+            send(sock, rsp_head_.c_str(), rsp_head_.size(), 0);
+            send(sock, blank_.c_str(), blank_.size(), 0);
+
             if(cgi_){
-
+                std::string &rsp_text_ = rsp_->rsp_text;
+                send(sock, rsp_text_.c_str(), rsp_text_.size(), 0);
             }else{
-                std::string &rsp_line_ = rsp_->rsp_line;
-                std::string &rsp_head_ = rsp_->rsp_head;
-                std::string &blank_ = rsp_->blank;
                 int &fd = rsp_->fd;
-
-                send(sock, rsp_line_.c_str(), rsp_line_.size(), 0);
-                send(sock, rsp_head_.c_str(), rsp_head_.size(), 0);
-                send(sock, blank_.c_str(), blank_.size(), 0);
                 sendfile(sock, fd, NULL, rq_->GetResourceSize());
             }
         }
@@ -349,9 +356,11 @@ class Entry{
         }
         static void ProcessCgi(Connect *&conn_, Request *&rq_, Response *&rsp_)
         {
-            int &code_ = rq_->code;
+            int &code_ = rsp_->code;
             int input[2];
             int output[2];
+            std::string &param_ = rq_->GetParam();
+            std::string &rsp_text_ = rsp_->rsp_text;
 
             pipe(input);
             pipe(output);
@@ -364,11 +373,45 @@ class Entry{
             else if(id == 0){//child
                 close(input[1]);
                 close(output[0]);
+
+                const std::string &path_ = rq_->GetPath();
+
+                std::string cl_env_="Content-Length=";
+                cl_env_ += ProtocolUtil::IntToString(param_.size());
+                putenv((char*)cl_env_.c_str());
+
+                dup2(input[0], 0);
+                dup2(output[1], 1);
+                execl(path_.c_str(), path_.c_str(), NULL);
+                exit(1);
             }
             else{//parent
                 close(input[0]);
                 close(output[1]);
 
+                size_t size_ = param_.size();
+                size_t total_ = 0;
+                size_t curr_ = 0;
+                const char *p_ = param_.c_str();
+                while( total_ < size_ &&\
+                        (curr_ = write(input[1], p_ + total_, size_ - total_)) > 0 ){
+                    total_ += curr_;
+                }
+
+                char c;
+                while(read(output[0], &c, 1) > 0){
+                    rsp_text_.push_back(c);
+                }
+                waitpid(id, NULL, 0);
+
+                close(input[1]);
+                close(output[0]);
+
+                rsp_->MakeStatusLine();
+                rq_->SetResourceSize(rsp_text_.size());
+                rsp_->MakeResponseHead(rq_);
+
+                conn_->SendResponse(rsp_, rq_, true);
             }
         }
         static int  PorcessResponse(Connect *&conn_, Request *&rq_, Response *&rsp_)
