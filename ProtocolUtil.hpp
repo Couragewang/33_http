@@ -21,9 +21,12 @@
 
 #define OK 200
 #define NOT_FOUND 404
+#define BAD_REQUEST 400
+#define SERVER_ERROR 500
 
 #define WEB_ROOT "wwwroot"
 #define HOME_PAGE "index.html"
+#define PAGE_404 "404.html"
 
 #define HTTP_VERSION "http/1.0"
 
@@ -60,10 +63,14 @@ class ProtocolUtil{
             switch(code){
                 case 200:
                     return "OK";
+                case 400:
+                    return "Bad Request";
                 case 404:
-                    return "NOT FOUND";
+                    return "Not Found";
+                case 500:
+                    return "Internal Server Error";
                 default:
-                    return "UNKNOW";
+                    return "Unknow";
             }
         }
         static std::string SuffixToType(const std::string &suffix_)
@@ -111,9 +118,17 @@ class Request{
         {
             return resource_suffix;
         }
+        void SetSuffix(std::string suffix_)
+        {
+            resource_suffix = suffix_;
+        }
         std::string &GetPath()
         {
             return path;
+        }
+        void SetPath(std::string &path_)
+        {
+            path = path_;
         }
         void RequestLineParse()
         {
@@ -367,7 +382,7 @@ class Entry{
 
             pid_t id = fork();
             if( id < 0 ){
-                code_ = NOT_FOUND;
+                code_ = SERVER_ERROR;
                 return;
             }
             else if(id == 0){//child
@@ -422,6 +437,35 @@ class Entry{
                 ProcessNonCgi(conn_, rq_, rsp_);
             }
         }
+        static void Process404(Connect *&conn_, Request *&rq_, Response *&rsp_)
+        {
+            std::string path_ = WEB_ROOT;
+            path_ += "/";
+            path_ += PAGE_404;
+            struct stat st;
+            stat(path_.c_str(), &st);
+            
+            rq_->SetResourceSize(st.st_size);
+            rq_->SetSuffix(".html");
+            rq_->SetPath(path_);
+
+            ProcessNonCgi(conn_, rq_, rsp_);
+        }
+        static void HandlerError(Connect *&conn_, Request *&rq_, Response *&rsp_)
+        {
+            int &code_ = rsp_->code;
+            switch(code_){
+                case 400:
+                    break;
+                case 404:
+                    Process404(conn_, rq_, rsp_);
+                    break;
+                case 500:
+                    break;
+                case 503:
+                    break;
+            }
+        }
         static void *HandlerRequest(void *arg_)
         {
             int sock_ = *(int*)arg_;
@@ -435,13 +479,15 @@ class Entry{
             conn_->RecvOneLine(rq_->rq_line);
             rq_->RequestLineParse();
             if( !rq_->IsMethodLegal() ){
-                code_ = NOT_FOUND;
+                conn_->RecvRequestHead(rq_->rq_head);
+                code_ = BAD_REQUEST;
                 goto end;
             }
 
             rq_->UriParse();
 
             if( !rq_->IsPathLegal() ){
+                conn_->RecvRequestHead(rq_->rq_head);
                 code_ = NOT_FOUND;
                 goto end;
             }
@@ -452,7 +498,7 @@ class Entry{
             if(rq_->RequestHeadParse()){
                 LOG(INFO, "parse head done");
             }else{
-                code_ = NOT_FOUND;
+                code_ = BAD_REQUEST;
                 goto end;
             }
 
@@ -464,7 +510,7 @@ class Entry{
             PorcessResponse(conn_, rq_, rsp_);
 end:
             if(code_ != OK){
-                //HandlerError(sock_);
+                HandlerError(conn_, rq_, rsp_);
             }
             delete conn_;
             delete rq_;
