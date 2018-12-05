@@ -329,6 +329,7 @@ class Connect{
             while( i_ < len_){
                 recv(sock, &c_, 1, 0);
                 text_.push_back(c_);
+                i_++;
             }
 
             param_ = text_;
