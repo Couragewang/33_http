@@ -14,4 +14,12 @@ cgi:
 
 .PHONY:clean
 clean:
-	rm -f $(bin) Cal
+	rm -rf $(bin) Cal output
+
+.PHONY:output
+output:
+	mkdir output
+	cp $(bin) output
+	cp -rf wwwroot output
+	cp Cal output/wwwroot
+	cp start.sh output

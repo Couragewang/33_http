@@ -3,13 +3,15 @@
 
 #include <pthread.h>
 #include "ProtocolUtil.hpp"
+#include "ThreadPool.hpp"
 
 class HttpdServer{
     private:
         int listen_sock;
         int port;
+        ThreadPool *tp;
     public:
-        HttpdServer(int port_):port(port_), listen_sock(-1)
+        HttpdServer(int port_):port(port_), listen_sock(-1), tp(NULL)
         {}
 
         void InitServer()
@@ -39,6 +41,8 @@ class HttpdServer{
             }
 
             LOG(INFO, "initServer success!");
+            tp = new ThreadPool();
+            tp->initThreadPool();
         }
 
         void Start()
@@ -52,11 +56,9 @@ class HttpdServer{
                     LOG(WARNING, "accept error!");
                     continue;
                 }
-                LOG(INFO, "Get New Client, Create Thread Handler Rquest...");
-                pthread_t tid_;
-                int *sockp_ = new int;
-                *sockp_ = sock_;
-                pthread_create(&tid_, NULL, Entry::HandlerRequest, (void*)sockp_);
+                Task t;
+                t.SetTask(sock_, Entry::HandlerRequest);
+                tp->PushTask(t);
             }
         }
 
