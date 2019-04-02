@@ -17,7 +17,7 @@ int main(int argc, char *argv[])
     signal(SIGPIPE, SIG_IGN);
     HttpdServer *serp = new HttpdServer(atoi(argv[1]));
     serp->InitServer();
-    daemon(1, 0);
+//    daemon(1, 0);
     serp->Start();
 
     delete serp;
